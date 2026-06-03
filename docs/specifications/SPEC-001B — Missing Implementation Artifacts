@@ -1,0 +1,876 @@
+# SPEC-001B
+
+# Exchange Abstraction Engineering Artifacts
+
+Version: 1.0.0
+
+Status: APPROVED
+
+Classification: Engineering Appendix
+
+Parent Document:
+
+* SPEC-001 Exchange Abstraction Specification
+
+---
+
+# 1. Purpose
+
+This document defines the engineering artifacts required to implement the Exchange Abstraction Layer.
+
+This specification provides:
+
+* Canonical Models
+* JSON Schemas
+* OpenAPI Contracts
+* Protobuf Contracts
+* Event Contracts
+* State Machines
+* Rate Limiting
+* Recovery Algorithms
+* Certification Frameworks
+* Security Controls
+
+---
+
+# 2. Canonical Pydantic Models
+
+## CanonicalTrade
+
+```python
+from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
+
+from pydantic import BaseModel
+
+
+class CanonicalTrade(BaseModel):
+    event_id: UUID
+
+    exchange: str
+
+    symbol: str
+
+    price: Decimal
+
+    quantity: Decimal
+
+    trade_time: datetime
+```
+
+---
+
+## CanonicalOrder
+
+```python
+class CanonicalOrder(BaseModel):
+
+    order_id: UUID
+
+    exchange: str
+
+    symbol: str
+
+    side: str
+
+    type: str
+
+    price: Decimal
+
+    quantity: Decimal
+
+    status: str
+```
+
+---
+
+## CanonicalPosition
+
+```python
+class CanonicalPosition(BaseModel):
+
+    position_id: UUID
+
+    symbol: str
+
+    side: str
+
+    quantity: Decimal
+
+    entry_price: Decimal
+```
+
+---
+
+## CanonicalBalance
+
+```python
+class CanonicalBalance(BaseModel):
+
+    asset: str
+
+    available: Decimal
+
+    locked: Decimal
+```
+
+---
+
+# 3. JSON Schema Repository
+
+Repository Structure
+
+```text
+schemas/
+
+  market/
+      trade.schema.json
+      orderbook.schema.json
+      kline.schema.json
+
+  trading/
+      order.schema.json
+      execution.schema.json
+
+  portfolio/
+      position.schema.json
+      balance.schema.json
+```
+
+---
+
+## trade.schema.json
+
+```json
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"CanonicalTrade",
+  "type":"object",
+  "required":[
+    "event_id",
+    "exchange",
+    "symbol",
+    "price",
+    "quantity",
+    "trade_time"
+  ]
+}
+```
+
+---
+
+# 4. OpenAPI Contracts
+
+Repository:
+
+```text
+contracts/openapi/
+```
+
+---
+
+## Place Order
+
+```yaml
+POST /orders
+```
+
+Request
+
+```json
+{
+  "symbol":"BTC-USDT-PERP",
+  "side":"BUY",
+  "type":"LIMIT",
+  "price":"100000",
+  "quantity":"1"
+}
+```
+
+Response
+
+```json
+{
+  "order_id":"uuid-v7",
+  "status":"ACCEPTED"
+}
+```
+
+---
+
+## Cancel Order
+
+```yaml
+DELETE /orders/{order_id}
+```
+
+Response
+
+```json
+{
+  "order_id":"uuid-v7",
+  "status":"CANCELLED"
+}
+```
+
+---
+
+## Query Positions
+
+```yaml
+GET /positions
+```
+
+---
+
+## Query Balances
+
+```yaml
+GET /balances
+```
+
+---
+
+# 5. Protobuf Contracts
+
+Repository:
+
+```text
+contracts/proto/
+```
+
+---
+
+## Trade.proto
+
+```proto
+syntax = "proto3";
+
+message Trade {
+
+  string event_id = 1;
+
+  string symbol = 2;
+
+  string price = 3;
+
+  string quantity = 4;
+
+  string trade_time = 5;
+}
+```
+
+---
+
+## Order.proto
+
+```proto
+syntax = "proto3";
+
+message Order {
+
+  string order_id = 1;
+
+  string symbol = 2;
+
+  string side = 3;
+
+  string type = 4;
+
+  string price = 5;
+
+  string quantity = 6;
+}
+```
+
+---
+
+# 6. Event Contracts
+
+Repository:
+
+```text
+contracts/events/
+```
+
+---
+
+Required Events
+
+```text
+market.trade.v1
+market.orderbook.v1
+
+execution.order.v1
+execution.fill.v1
+
+exchange.connected.v1
+exchange.disconnected.v1
+```
+
+---
+
+## market.trade.v1
+
+```json
+{
+  "event_type":"market.trade.v1",
+  "event_version":"1.0.0",
+  "payload":{
+    "symbol":"BTC-USDT-PERP",
+    "price":"100000",
+    "quantity":"0.5"
+  }
+}
+```
+
+---
+
+# 7. Adapter State Machine
+
+```text
+CREATED
+   ↓
+
+CONNECTING
+   ↓
+
+CONNECTED
+   ↓
+
+DEGRADED
+   ↓
+
+RECONNECTING
+   ↓
+
+CONNECTED
+   ↓
+
+SHUTDOWN
+```
+
+---
+
+Illegal transitions prohibited.
+
+---
+
+# 8. WebSocket State Machine
+
+```text
+DISCONNECTED
+     ↓
+
+CONNECTING
+     ↓
+
+AUTHENTICATING
+     ↓
+
+SUBSCRIBED
+     ↓
+
+STREAMING
+```
+
+Recovery:
+
+```text
+STREAMING
+     ↓
+
+RECONNECTING
+     ↓
+
+RESYNCING
+     ↓
+
+STREAMING
+```
+
+---
+
+# 9. Sequence Reconciliation
+
+Gap Detection
+
+```python
+if current_update_id != last_update_id + 1:
+    gap_detected = True
+```
+
+---
+
+Recovery
+
+```text
+Pause Processing
+
+↓
+
+Fetch Snapshot
+
+↓
+
+Apply Snapshot
+
+↓
+
+Replay Buffered Events
+
+↓
+
+Resume Processing
+```
+
+---
+
+# 10. Rate Limit Framework
+
+Each adapter owns:
+
+```text
+REST Bucket
+Order Bucket
+Market Bucket
+WebSocket Bucket
+```
+
+---
+
+## Token Bucket
+
+```python
+capacity = 100
+
+tokens = 100
+
+refill_rate = 10
+```
+
+Before request:
+
+```python
+if tokens > 0:
+    tokens -= 1
+else:
+    wait()
+```
+
+---
+
+## Adaptive Throttling
+
+Inputs:
+
+* Remaining Quota
+* Latency
+* Error Rate
+* Exchange Warnings
+
+Outputs:
+
+* Increase
+* Maintain
+* Reduce
+
+---
+
+# 11. Error Taxonomy
+
+Mandatory Errors
+
+```text
+AuthenticationError
+
+AuthorizationError
+
+RateLimitError
+
+NetworkError
+
+TimeoutError
+
+ServerError
+
+ValidationError
+
+OrderRejectedError
+
+PositionMismatchError
+
+DataGapError
+```
+
+All exchanges must map to these.
+
+---
+
+# 12. Circuit Breakers
+
+State Machine
+
+```text
+CLOSED
+   ↓
+
+OPEN
+   ↓
+
+HALF_OPEN
+   ↓
+
+CLOSED
+```
+
+Applied To:
+
+```text
+REST
+
+WebSocket
+
+Trading
+```
+
+---
+
+# 13. Exchange Health Engine
+
+Inputs
+
+```text
+Latency
+
+Disconnect Rate
+
+Error Rate
+
+Gap Rate
+
+Rate Limit Frequency
+```
+
+Output
+
+```text
+0-100 Health Score
+```
+
+Consumers
+
+```text
+Dashboard
+
+Routing Engine
+
+AI Council
+```
+
+---
+
+# 14. Replay Contracts
+
+```python
+async def replay_trades(
+    symbol,
+    start_time,
+    end_time
+):
+    ...
+```
+
+---
+
+```python
+async def replay_orderbook(
+    symbol,
+    start_time,
+    end_time
+):
+    ...
+```
+
+---
+
+Replay behavior must match live behavior.
+
+---
+
+# 15. Paper Trading Contracts
+
+Implementations
+
+```text
+BinanceAdapter
+
+PaperExchangeAdapter
+
+SimulationExchangeAdapter
+```
+
+All implement:
+
+```python
+IExchangeAdapter
+```
+
+---
+
+# 16. Adapter Certification Framework
+
+Required Suites
+
+```text
+Connectivity
+
+Market Data
+
+Trading
+
+Recovery
+
+Replay
+
+Performance
+
+Security
+```
+
+---
+
+## Connectivity Tests
+
+```text
+Connect
+
+Disconnect
+
+Reconnect
+
+Heartbeat
+```
+
+---
+
+## Trading Tests
+
+```text
+Place Order
+
+Cancel Order
+
+Modify Order
+
+Query Order
+```
+
+---
+
+## Failure Tests
+
+```text
+Network Failure
+
+API Failure
+
+Rate Limit Failure
+
+Reconnect Recovery
+```
+
+---
+
+# 17. Exchange Onboarding Checklist
+
+Step 1
+
+Create Adapter
+
+```text
+exchange_adapter_<name>.py
+```
+
+---
+
+Step 2
+
+Implement:
+
+```text
+IMarketData
+
+ITrading
+
+IAccount
+
+IPosition
+```
+
+---
+
+Step 3
+
+Add Symbol Registry Mappings
+
+---
+
+Step 4
+
+Implement REST Client
+
+---
+
+Step 5
+
+Implement WebSocket Client
+
+---
+
+Step 6
+
+Implement Normalizers
+
+Exchange Format
+
+↓
+
+Canonical Format
+
+---
+
+Step 7
+
+Pass Certification
+
+---
+
+Step 8
+
+Shadow Deployment
+
+---
+
+Step 9
+
+Paper Trading
+
+---
+
+Step 10
+
+Production Approval
+
+Requires:
+
+* Risk Approval
+* Council Approval
+* Certification Approval
+
+---
+
+# 18. Security Controls
+
+Required
+
+```text
+HMAC Verification
+
+Timestamp Validation
+
+Nonce Protection
+
+Credential Rotation
+
+Secret Vault Integration
+
+IP Allow Lists
+```
+
+---
+
+# 19. Performance SLAs
+
+```text
+Trade Normalization
+< 5ms
+
+Orderbook Normalization
+< 10ms
+
+Reconnect
+< 30s
+
+Snapshot Recovery
+< 60s
+```
+
+---
+
+# 20. Repository Layout
+
+```text
+src/
+
+  exchanges/
+
+      gateway/
+
+      adapters/
+
+      contracts/
+
+      schemas/
+
+      replay/
+
+      paper/
+
+      simulation/
+
+      certification/
+```
+
+---
+
+# 21. Definition Of Done
+
+An exchange adapter is considered production ready only if:
+
+✓ Interface Compliant
+
+✓ Canonical Model Compliant
+
+✓ Event Compliant
+
+✓ Replay Compatible
+
+✓ Paper Trading Compatible
+
+✓ Certification Passed
+
+✓ Security Review Passed
+
+✓ Council Approved
+
+---
+
+# 22. Document Status
+
+```text
+Document: SPEC-001B
+
+Name:
+Exchange Abstraction Engineering Artifacts
+
+Version:
+1.0.0
+
+Status:
+APPROVED
+
+Classification:
+Engineering Appendix
+```
