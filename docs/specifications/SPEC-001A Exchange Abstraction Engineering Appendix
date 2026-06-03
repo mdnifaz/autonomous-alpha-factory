@@ -1,0 +1,614 @@
+# SPEC-001A Exchange Abstraction Engineering Appendix
+
+Version: 1.0.0
+
+Depends On:
+
+SPEC-001
+
+---
+
+# 1. Python Interface Definitions
+
+## IExchangeAdapter
+
+```python
+from abc import ABC, abstractmethod
+
+class IExchangeAdapter(ABC):
+
+    @property
+    @abstractmethod
+    def exchange_code(self) -> str:
+        pass
+
+    @abstractmethod
+    async def connect(self):
+        pass
+
+    @abstractmethod
+    async def disconnect(self):
+        pass
+
+    @abstractmethod
+    async def health(self):
+        pass
+```
+
+---
+
+## IMarketData
+
+```python
+class IMarketData(ABC):
+
+    @abstractmethod
+    async def subscribe_trades(
+        self,
+        symbol: str
+    ):
+        pass
+
+    @abstractmethod
+    async def subscribe_orderbook(
+        self,
+        symbol: str
+    ):
+        pass
+
+    @abstractmethod
+    async def subscribe_kline(
+        self,
+        symbol: str,
+        interval: str
+    ):
+        pass
+```
+
+---
+
+## ITrading
+
+```python
+class ITrading(ABC):
+
+    @abstractmethod
+    async def place_order(
+        self,
+        request
+    ):
+        pass
+
+    @abstractmethod
+    async def cancel_order(
+        self,
+        order_id
+    ):
+        pass
+
+    @abstractmethod
+    async def amend_order(
+        self,
+        request
+    ):
+        pass
+```
+
+---
+
+## IAccount
+
+```python
+class IAccount(ABC):
+
+    @abstractmethod
+    async def balances(self):
+        pass
+
+    @abstractmethod
+    async def account_info(self):
+        pass
+```
+
+---
+
+## IPosition
+
+```python
+class IPosition(ABC):
+
+    @abstractmethod
+    async def positions(self):
+        pass
+```
+
+---
+
+# 2. Canonical JSON Schemas
+
+## Canonical Trade
+
+```json
+{
+  "event_id":"uuid-v7",
+  "exchange":"BINANCE",
+  "symbol":"BTC-USDT-PERP",
+  "price":"100000.00",
+  "quantity":"0.250",
+  "trade_time":"2026-01-01T00:00:00Z"
+}
+```
+
+---
+
+## Canonical Order
+
+```json
+{
+  "order_id":"uuid-v7",
+  "exchange":"BINANCE",
+  "symbol":"BTC-USDT-PERP",
+  "side":"BUY",
+  "type":"LIMIT",
+  "price":"100000.00",
+  "quantity":"1.000",
+  "status":"OPEN"
+}
+```
+
+---
+
+## Canonical Position
+
+```json
+{
+  "position_id":"uuid-v7",
+  "symbol":"BTC-USDT-PERP",
+  "side":"LONG",
+  "quantity":"1.5",
+  "entry_price":"100000"
+}
+```
+
+---
+
+## Canonical Balance
+
+```json
+{
+  "asset":"USDT",
+  "available":"10000",
+  "locked":"1000"
+}
+```
+
+---
+
+# 3. WebSocket Message Schemas
+
+## Internal Trade Event
+
+```json
+{
+  "event_type":"market.trade.v1",
+  "correlation_id":"uuid-v7",
+  "payload":{
+      "symbol":"BTC-USDT-PERP",
+      "price":"100000",
+      "quantity":"0.5"
+  }
+}
+```
+
+---
+
+## Internal OrderBook Event
+
+```json
+{
+  "event_type":"market.orderbook.v1",
+  "payload":{
+      "symbol":"BTC-USDT-PERP",
+      "bids":[["100000","1"]],
+      "asks":[["100001","2"]]
+  }
+}
+```
+
+---
+
+# 4. REST Contracts
+
+## Place Order Request
+
+```json
+{
+  "symbol":"BTC-USDT-PERP",
+  "side":"BUY",
+  "type":"LIMIT",
+  "price":"100000",
+  "quantity":"1"
+}
+```
+
+---
+
+## Place Order Response
+
+```json
+{
+  "order_id":"uuid-v7",
+  "status":"ACCEPTED"
+}
+```
+
+---
+
+## Cancel Order Request
+
+```json
+{
+  "order_id":"uuid-v7"
+}
+```
+
+---
+
+## Cancel Order Response
+
+```json
+{
+  "order_id":"uuid-v7",
+  "status":"CANCELLED"
+}
+```
+
+---
+
+# 5. Rate Limit Algorithms
+
+## Global Architecture
+
+Every adapter owns:
+
+```text
+REST Bucket
+WebSocket Bucket
+Order Bucket
+Market Data Bucket
+```
+
+---
+
+## Token Bucket
+
+```python
+capacity = 100
+tokens = 100
+
+refill_rate = 10/sec
+```
+
+Before request:
+
+```python
+if tokens > 0:
+    tokens -= 1
+else:
+    wait()
+```
+
+---
+
+## Adaptive Throttling
+
+Inputs:
+
+* Remaining Quota
+* Error Rate
+* Latency
+* Exchange Warnings
+
+Outputs:
+
+* Slow Down
+* Maintain
+* Speed Up
+
+No hardcoded pacing.
+
+---
+
+# 6. Sequence Reconciliation Algorithm
+
+## Problem
+
+WebSocket feeds may lose packets.
+
+---
+
+## Detection
+
+Maintain:
+
+```python
+last_update_id
+```
+
+Incoming:
+
+```python
+current_update_id
+```
+
+If:
+
+```python
+current != last + 1
+```
+
+Gap detected.
+
+---
+
+## Recovery
+
+```text
+Pause Processing
+
+Fetch Snapshot
+
+Apply Snapshot
+
+Replay Buffered Updates
+
+Resume
+```
+
+---
+
+## OrderBook Recovery
+
+```text
+Local State Invalid
+
+↓
+
+Fetch REST Snapshot
+
+↓
+
+Apply Snapshot
+
+↓
+
+Apply Buffered Events
+
+↓
+
+Resume Stream
+```
+
+---
+
+# 7. Adapter Certification Tests
+
+Every adapter must pass.
+
+## Connectivity
+
+Tests:
+
+```text
+Connect
+Disconnect
+Reconnect
+Heartbeat
+```
+
+---
+
+## Market Data
+
+Tests:
+
+```text
+Trades
+OrderBooks
+Klines
+Funding
+```
+
+---
+
+## Trading
+
+Tests:
+
+```text
+Place Order
+Cancel Order
+Modify Order
+Order Query
+```
+
+---
+
+## Accounts
+
+Tests:
+
+```text
+Balance Retrieval
+Position Retrieval
+Margin Retrieval
+```
+
+---
+
+## Failure Tests
+
+Tests:
+
+```text
+Network Failure
+API Failure
+Rate Limit Failure
+Reconnect
+```
+
+---
+
+## Latency Tests
+
+Measure:
+
+```text
+Trade Latency
+
+Order Latency
+
+Normalization Latency
+```
+
+---
+
+# 8. Exchange Onboarding Checklist
+
+## Step 1
+
+Create Adapter
+
+```text
+exchange_adapter_<name>.py
+```
+
+---
+
+## Step 2
+
+Implement Interfaces
+
+```text
+IMarketData
+ITrading
+IAccount
+IPosition
+```
+
+---
+
+## Step 3
+
+Add Symbol Mappings
+
+```text
+symbol_registry.yaml
+```
+
+---
+
+## Step 4
+
+Implement REST Client
+
+---
+
+## Step 5
+
+Implement WebSocket Client
+
+---
+
+## Step 6
+
+Implement Normalizers
+
+Convert:
+
+```text
+Exchange Format
+
+↓
+
+Canonical Format
+```
+
+---
+
+## Step 7
+
+Pass Certification Tests
+
+All tests required.
+
+---
+
+## Step 8
+
+Shadow Deployment
+
+No trading.
+
+---
+
+## Step 9
+
+Paper Trading
+
+No real capital.
+
+---
+
+## Step 10
+
+Production Approval
+
+Requires:
+
+* Risk Approval
+* Council Approval
+* Certification Approval
+
+---
+
+# 9. Reference Architecture
+
+```text
+Portfolio Service
+        │
+        ▼
+Exchange Gateway
+        │
+ ┌──────┼──────┐
+ │      │      │
+ ▼      ▼      ▼
+
+Binance Bybit OKX
+Adapter Adapter Adapter
+
+ │      │      │
+
+ REST + WebSocket
+```
+
+---
+
+# 10. Definition of Done
+
+An exchange integration is complete only if:
+
+✓ Interface compliant
+
+✓ Canonical object compliant
+
+✓ Certification passed
+
+✓ Replay compatible
+
+✓ Paper trading compatible
+
+✓ Production approved
+
+```
+```
